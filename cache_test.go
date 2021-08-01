@@ -1,10 +1,13 @@
 package sample1
 
 import (
+	"fmt"
+	"math/rand"
+	"sort"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
-	"fmt"
-	"sort"
 )
 
 // mockResult has the float64 and err to return
@@ -165,6 +168,65 @@ func TestGetPricesFor_ParallelizeCalls(t *testing.T) {
 	cache := NewTransparentCache(mockService, time.Minute)
 	start := time.Now()
 	assertFloats(t, []float64{5, 7}, getPricesWithNoErr(t, cache, "p1", "p2"), "wrong price returned")
+	elapsedTime := time.Since(start)
+	if elapsedTime > (1200 * time.Millisecond) {
+		t.Error("calls took too long, expected them to take a bit over one second")
+	}
+}
+
+func createMockService(keys int, callDelay time.Duration) mockPriceService {
+	mockService := mockPriceService{
+		callDelay:   time.Second, // each call to external service takes one full second
+		mockResults: map[string]mockResult{},
+	}
+
+	for i := 0; i < keys; i++ {
+		mockService.mockResults[strconv.Itoa(i)] = mockResult{price: rand.Float64()}
+	}
+	return mockService
+}
+
+// Check that cache parallelize service calls when getting 1000 several values at once
+func TestGetPricesFor1000_ParallelizeCalls(t *testing.T) {
+	mockService := createMockService(1000, time.Second)
+	cache := NewTransparentCache(&mockService, time.Minute)
+	start := time.Now()
+	keys := []string{}
+	prices := []float64{}
+	for k, v := range mockService.mockResults {
+		keys = append(keys, k)
+		prices = append(prices, v.price)
+	}
+	assertFloats(t, prices, getPricesWithNoErr(t, cache, keys...), "wrong price returned")
+	assertInt(t, 1000, mockService.numCalls, "Wrong Number of calls")
+	elapsedTime := time.Since(start)
+	if elapsedTime > (1200 * time.Millisecond) {
+		t.Error("calls took too long, expected them to take a bit over one second")
+	}
+}
+
+// Check that cache parallelize service calls when getting repeated values at once
+// When making simultaneous requests for the same item, the API Might need to be called more than once.
+// The perfect solution would be if the API were called only once.
+func TestRepeatedItem_ParallelizeCalls(t *testing.T) {
+	mockService := &mockPriceService{
+		callDelay: time.Second, // each call to external service takes one full second
+		mockResults: map[string]mockResult{
+			"p1": {price: 5, err: nil},
+		},
+	}
+	cache := NewTransparentCache(mockService, time.Minute)
+	start := time.Now()
+	wg := sync.WaitGroup{}
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			assertFloats(t, []float64{5}, getPricesWithNoErr(t, cache, "p1"), "wrong price returned")
+		}()
+	}
+	wg.Wait()
+	assertInt(t, 100, mockService.numCalls, "Wrong Number of calls")
 	elapsedTime := time.Since(start)
 	if elapsedTime > (1200 * time.Millisecond) {
 		t.Error("calls took too long, expected them to take a bit over one second")

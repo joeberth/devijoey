@@ -19,8 +19,7 @@ type TransparentCache struct {
 	actualPriceService PriceService
 	maxAge             time.Duration
 	prices             map[string]PriceAndTime
-	mutexMap           map[string]*sync.Mutex
-	mutex              sync.Mutex
+	mutex              sync.RWMutex
 }
 
 // PriceAndTime its a schema to represent when the price was modified and the Price value.
@@ -34,7 +33,6 @@ func NewTransparentCache(actualPriceService PriceService, maxAge time.Duration) 
 		actualPriceService: actualPriceService,
 		maxAge:             maxAge,
 		prices:             make(map[string]PriceAndTime),
-		mutexMap:           make(map[string]*sync.Mutex),
 	}
 }
 
@@ -45,28 +43,20 @@ func (c *TransparentCache) IsValidCache(itemCode string) bool {
 
 // GetPriceFor gets the price for the item, either from the cache or the actual service if it was not cached or too old
 func (c *TransparentCache) GetPriceFor(itemCode string) (float64, error) {
-	c.mutex.Lock()
-	mutex, ok := c.mutexMap[itemCode]
-	if !ok {
-		mutex = &sync.Mutex{}
-		c.mutexMap[itemCode] = mutex
-	}
-	mutex.Lock()
-	defer mutex.Unlock()
-
-	c.mutex.Unlock()
+	c.mutex.RLock()
 	price, ok := c.prices[itemCode]
+	c.mutex.RUnlock()
 	if ok && c.IsValidCache(itemCode) {
 		return price.value, nil
-	} else if ok && !c.IsValidCache(itemCode) {
-		// If its expired, we do not need the itemCode in Map anymore.
-		delete(c.prices, itemCode)
 	}
+	// If its expired, we do not need to delete because will be overwritten.
 	priceNew, err := c.actualPriceService.GetPriceFor(itemCode)
 	if err != nil {
 		return 0, fmt.Errorf("getting price from service : %v, Item code: %v", err.Error(), itemCode)
 	}
+	c.mutex.Lock()
 	c.prices[itemCode] = PriceAndTime{value: priceNew, timeModified: time.Now()}
+	c.mutex.Unlock()
 	return priceNew, nil
 }
 
