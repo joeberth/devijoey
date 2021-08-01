@@ -28,6 +28,7 @@ type PriceAndTime struct {
 	value        float64
 }
 
+//NewTransparentCache Constructor
 func NewTransparentCache(actualPriceService PriceService, maxAge time.Duration) *TransparentCache {
 	return &TransparentCache{
 		actualPriceService: actualPriceService,
@@ -43,6 +44,7 @@ func (c *TransparentCache) IsValidCache(itemCode string) bool {
 
 // GetPriceFor gets the price for the item, either from the cache or the actual service if it was not cached or too old
 func (c *TransparentCache) GetPriceFor(itemCode string) (float64, error) {
+	// Prevent Concurrent read from the Price Map.
 	c.mutex.RLock()
 	price, ok := c.prices[itemCode]
 	c.mutex.RUnlock()
@@ -54,6 +56,7 @@ func (c *TransparentCache) GetPriceFor(itemCode string) (float64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("getting price from service : %v, Item code: %v", err.Error(), itemCode)
 	}
+	// Prevent Concurrent Writes
 	c.mutex.Lock()
 	c.prices[itemCode] = PriceAndTime{value: priceNew, timeModified: time.Now()}
 	c.mutex.Unlock()
@@ -63,6 +66,7 @@ func (c *TransparentCache) GetPriceFor(itemCode string) (float64, error) {
 // GetPricesFor gets the prices for several items at once, some might be found in the cache, others might not
 // If any of the operations returns an error, it should return an error as well
 func (c *TransparentCache) GetPricesFor(itemCodes ...string) ([]float64, error) {
+	// Create a err channel to deal with errors and return results in parallel running.
 	results := make([]float64, len(itemCodes))
 	errChannel := make(chan error, len(itemCodes))
 	wg := sync.WaitGroup{}
@@ -83,6 +87,5 @@ func (c *TransparentCache) GetPricesFor(itemCodes ...string) ([]float64, error) 
 	for e := range errChannel {
 		return nil, e
 	}
-
 	return results, nil
 }
