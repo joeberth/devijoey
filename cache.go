@@ -19,6 +19,7 @@ type TransparentCache struct {
 	actualPriceService PriceService
 	maxAge             time.Duration
 	prices             map[string]PriceAndTime
+	mutexMap           map[string]*sync.Mutex
 	mutex              sync.Mutex
 }
 
@@ -32,7 +33,8 @@ func NewTransparentCache(actualPriceService PriceService, maxAge time.Duration) 
 	return &TransparentCache{
 		actualPriceService: actualPriceService,
 		maxAge:             maxAge,
-		prices:             map[string]PriceAndTime{},
+		prices:             make(map[string]PriceAndTime),
+		mutexMap:           make(map[string]*sync.Mutex),
 	}
 }
 
@@ -44,7 +46,15 @@ func (c *TransparentCache) IsValidCache(itemCode string) bool {
 // GetPriceFor gets the price for the item, either from the cache or the actual service if it was not cached or too old
 func (c *TransparentCache) GetPriceFor(itemCode string) (float64, error) {
 	c.mutex.Lock()
-	defer c.mutex.Unlock()
+	mutex, ok := c.mutexMap[itemCode]
+	if !ok {
+		mutex = &sync.Mutex{}
+		c.mutexMap[itemCode] = mutex
+	}
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	c.mutex.Unlock()
 	price, ok := c.prices[itemCode]
 	if ok && c.IsValidCache(itemCode) {
 		return price.value, nil
